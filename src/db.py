@@ -4,8 +4,8 @@ from collections.abc import Generator
 
 from sqlalchemy.orm import Session
 
-from .settings import AppSettings
 from .db_backend import build_engine, build_session_factory
+from .settings import AppSettings
 
 settings = AppSettings()
 engine = build_engine(settings.database_url)

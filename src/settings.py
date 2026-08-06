@@ -1,11 +1,19 @@
 """Shared application settings for the backend examples."""
 
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+
+# pydantic-settings reads .env into the settings object only — it does NOT put the
+# values into os.environ. pydantic-ai's model providers (GroqProvider, GoogleProvider)
+# authenticate via os.getenv('GROQ_API_KEY') / os.getenv('GOOGLE_API_KEY'), so export
+# the .env contents into the process environment too (existing env vars win).
+load_dotenv(_ENV_PATH)
 
 
 class AppSettings(BaseSettings):

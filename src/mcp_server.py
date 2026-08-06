@@ -1,17 +1,17 @@
+import calendar
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
-import calendar
 
-from sqlalchemy.engine import CursorResult
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy.engine import CursorResult
 
+from src.budget_db_backend import Budget, Category, Transaction
 from .db_backend import build_engine, build_session_factory
-from .budget_db_backend import Budget, Category, Transaction
 from .settings import AppSettings
-import re
 
 settings = AppSettings()
 engine = build_engine(settings.database_url)
@@ -31,7 +31,9 @@ def _current_user_id() -> int:
         raise RuntimeError(f"Invalid x-current-user-id header: {raw_user_id!r}") from error
 
 
-def _period_bounds(period: Literal["today", "this_week", "last_week", "this_month", "last_month"]) -> tuple[date, date]:
+def _period_bounds(
+    period: Literal["today", "this_week", "last_week", "this_month", "last_month"],
+) -> tuple[date, date]:
     today = date.today()
     if period == "today":
         return today, today
@@ -65,7 +67,9 @@ def resolve_category(category_name: str) -> dict[str, Any]:
         matches = db.execute(stmt).scalars().all()
         return {
             "status": "success",
-            "matches": [{"category_id": c.category_id, "name": c.name, "type": c.type} for c in matches],
+            "matches": [
+                {"category_id": c.category_id, "name": c.name, "type": c.type} for c in matches
+            ],
         }
 
 
@@ -87,7 +91,11 @@ def create_transaction(
     current_user_id = _current_user_id()
     with SessionFactory() as db:
         try:
-            parsed_date = datetime.strptime(transaction_date, "%Y-%m-%d") if transaction_date else datetime.now()
+            parsed_date = (
+                datetime.strptime(transaction_date, "%Y-%m-%d")
+                if transaction_date
+                else datetime.now()
+            )
 
             budget_warning = None
             if transaction_type == "expense" and category_id is not None:
@@ -284,16 +292,18 @@ def get_budget_status(category_id: int | None = None) -> dict[str, Any]:
             limit = float(b.monthly_limit)
             pct_spent = spent / limit if limit else 0.0
             pct_month_elapsed = today.day / days_in_month
-            results.append({
-                "category_id": b.category_id,
-                "monthly_limit": limit,
-                "spent_so_far": spent,
-                "remaining": limit - spent,
-                "pct_of_budget_used": round(pct_spent, 3),
-                "pct_of_month_elapsed": round(pct_month_elapsed, 3),
-                "pacing": "ahead" if pct_spent > pct_month_elapsed else "on_track_or_under",
-                "alert_threshold_hit": pct_spent >= float(b.alert_threshold),
-            })
+            results.append(
+                {
+                    "category_id": b.category_id,
+                    "monthly_limit": limit,
+                    "spent_so_far": spent,
+                    "remaining": limit - spent,
+                    "pct_of_budget_used": round(pct_spent, 3),
+                    "pct_of_month_elapsed": round(pct_month_elapsed, 3),
+                    "pacing": "ahead" if pct_spent > pct_month_elapsed else "on_track_or_under",
+                    "alert_threshold_hit": pct_spent >= float(b.alert_threshold),
+                }
+            )
         return {"status": "success", "budgets": results}
 
 
@@ -333,22 +343,33 @@ def change_budget(
                     user_id=current_user_id,
                     category_id=category_id,
                     monthly_limit=Decimal(str(monthly_limit)),
-                    alert_threshold=Decimal(str(alert_threshold)) if alert_threshold is not None else Decimal("0.80"),
+                    alert_threshold=Decimal(str(alert_threshold))
+                    if alert_threshold is not None
+                    else Decimal("0.80"),
                 )
                 db.add(budget)
                 db.commit()
                 db.refresh(budget)
-                return {"status": "success", "budget_id": budget.budget_id, "message": "Budget created."}
+                return {
+                    "status": "success",
+                    "budget_id": budget.budget_id,
+                    "message": "Budget created.",
+                }
 
             if monthly_limit is not None:
                 budget.monthly_limit = Decimal(str(monthly_limit))
             if alert_threshold is not None:
                 budget.alert_threshold = Decimal(str(alert_threshold))
             db.commit()
-            return {"status": "success", "budget_id": budget.budget_id, "message": "Budget updated."}
+            return {
+                "status": "success",
+                "budget_id": budget.budget_id,
+                "message": "Budget updated.",
+            }
         except Exception as e:
             db.rollback()
             return {"status": "error", "error_details": str(e)}
+
 
 USER_SCOPED_TABLES = {"transactions", "categories", "budgets"}
 
@@ -356,8 +377,7 @@ USER_SCOPED_TABLES = {"transactions", "categories", "budgets"}
 def _check_user_scoping(clean_query: str) -> dict[str, Any] | None:
     """Return an error dict if a user-scoped query doesn't filter by :current_user_id."""
     touches_scoped_table = any(
-        re.search(rf"\b{table}\b", clean_query, re.IGNORECASE)
-        for table in USER_SCOPED_TABLES
+        re.search(rf"\b{table}\b", clean_query, re.IGNORECASE) for table in USER_SCOPED_TABLES
     )
     if touches_scoped_table and ":current_user_id" not in clean_query:
         return {
@@ -369,6 +389,7 @@ def _check_user_scoping(clean_query: str) -> dict[str, Any] | None:
             ),
         }
     return None
+
 
 def execute_select_query(query: str) -> dict[str, Any]:
     """Run a read-only SELECT query against the database and return the results.
@@ -397,7 +418,6 @@ def execute_select_query(query: str) -> dict[str, Any]:
         return error
 
     with SessionFactory() as db:
-
         try:
             result = cast(
                 CursorResult,
@@ -407,11 +427,12 @@ def execute_select_query(query: str) -> dict[str, Any]:
                 ),
             )
             columns = list(result.keys())
-            rows = [dict(zip(columns, row)) for row in result.fetchall()]
+            rows = [dict(zip(columns, row, strict=False)) for row in result.fetchall()]
             return {"status": "success", "row_count": len(rows), "data": rows}
         except Exception as e:
             db.rollback()
             return {"status": "error", "error_details": str(e)}
+
 
 def execute_write_query(query: str) -> dict[str, Any]:
     """Run a write (INSERT, UPDATE, or DELETE) query against the database.

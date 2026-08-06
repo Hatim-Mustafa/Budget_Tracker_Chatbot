@@ -21,6 +21,7 @@ dependencies = [
     "fastmcp-slim[server]>=3.4.4",
     "passlib[bcrypt]>=1.7.4",
     "argon2-cffi>=25.1.0",
+    "chonkie>=1.7.0",
 ]
 
 [dependency-groups]

@@ -1,24 +1,26 @@
 from typing import Any
 from uuid import UUID
 
+import logfire
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
+from sqlalchemy.orm import Session
 from src.auth import create_auth_router, get_current_user
 
+from .agent import AgentState, chat_messages_to_model_messages, create_agent, summarize_chat
+from .budget_db_backend import User as UserTable
+from .db import get_session
+from .db_backend import ConversationHandler
 from .models import ChatMessage, ConversationInfo, ConversationRenameRequest, MessageRole
 
-from .agent import AgentState, chat_messages_to_model_messages, create_agent, summarize_chat
-from .db_backend import ConversationHandler
-from .budget_db_backend import User as UserTable
-from sqlalchemy.orm import Session
-from .db import get_session
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
 
 def create_chat_router() -> APIRouter:
     resolved_agent_factory = create_agent
-    
-    chat_router = APIRouter(tags=["chat"])
 
+    chat_router = APIRouter(tags=["chat"])
 
     @chat_router.get("/conversations", response_model=list[ConversationInfo])
     async def list_conversations(
@@ -61,7 +63,7 @@ def create_chat_router() -> APIRouter:
         deleted = convo_handler.delete_conversation(convo_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     @chat_router.get("/new_conversation", response_model=UUID)
     async def new_conversation(
         session: Session = Depends(get_session),
@@ -82,7 +84,9 @@ def create_chat_router() -> APIRouter:
             conversation = convo_handler.create_conversation(user_id=current_user.user_id)
             request.conversation_id = conversation.id
 
-        history = chat_messages_to_model_messages(convo_handler.load_messages(request.conversation_id))
+        history = chat_messages_to_model_messages(
+            convo_handler.load_messages(request.conversation_id)
+        )
 
         if len(history) > 10:
             history = await summarize_chat(history)
@@ -96,7 +100,7 @@ def create_chat_router() -> APIRouter:
         reply = ChatMessage(
             conversation_id=request.conversation_id,
             role=MessageRole.ASSISTANT,
-            content=result.output
+            content=result.output,
         )
         convo_handler.append_message(request.conversation_id, reply)
         return reply
@@ -117,5 +121,6 @@ def create_app() -> FastAPI:
     app.include_router(create_auth_router())
 
     return app
+
 
 app = create_app()

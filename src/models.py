@@ -10,13 +10,20 @@ from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    user_message: str = Field(description="The user's message to the chatbot.", min_length=1, examples=["Explain dependency injection in FastAPI."])
+    user_message: str = Field(
+        description="The user's message to the chatbot.",
+        min_length=1,
+        examples=["Explain dependency injection in FastAPI."],
+    )
+
 
 class ChatResponse(BaseModel):
     reply: str = Field(description="The chatbot's reply to the user's message.", min_length=1)
-    model_name: str = Field(description="The name of the model used to generate the reply.", min_length=1)
+    model_name: str = Field(
+        description="The name of the model used to generate the reply.", min_length=1
+    )
 
-    
+
 class MessageRole(str, Enum):
     """Supported chat roles for the course chat application."""
 
@@ -29,10 +36,15 @@ class MessageRole(str, Enum):
 class ChatMessage(BaseModel):
     """A single chat message in a conversation transcript."""
 
-    id: UUID | None = Field(default=None, description="The message's own identifier, set once persisted.")
+    id: UUID | None = Field(
+        default=None, description="The message's own identifier, set once persisted."
+    )
     role: MessageRole
     content: str = Field(min_length=1)
-    conversation_id: UUID = Field(default_factory=uuid4, description="The unique identifier for the conversation this message belongs to.")
+    conversation_id: UUID = Field(
+        default_factory=uuid4,
+        description="The unique identifier for the conversation this message belongs to.",
+    )
     created_at: datetime | None = Field(default=None, description="When the message was persisted.")
 
 

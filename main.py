@@ -1,5 +1,6 @@
 def main():
-    print("Hello from internship-course!")
+    # Your main function code here
+    pass
 
 
 if __name__ == "__main__":

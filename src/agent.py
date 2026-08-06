@@ -1,24 +1,27 @@
+from dataclasses import dataclass, field
+import os
 from typing import Any
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
-from pydantic_ai.models.groq import GroqModel
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.google import GoogleModel
-
+from pydantic_ai.models.groq import GroqModel
+from sqlalchemy import or_, select, text
+from sqlalchemy.orm import Session
 from src.budget_db_backend import Category
+from subagents_pydantic_ai import SubAgentCapability, SubAgentConfig
 
 from .models import ChatMessage, MessageRole
 from .settings import AppSettings
-
-from dataclasses import dataclass, field
-from sqlalchemy import or_, select, text
-from sqlalchemy.orm import Session
-from pydantic_ai import RunContext
-import re
-
-from subagents_pydantic_ai import SubAgentCapability, SubAgentConfig
-from pydantic_ai.mcp import MCPToolset
-
+from openai import OpenAI
 
 SYSTEM_PROMPT = """
 You are the orchestrator for a conversational personal finance assistant. You talk to the
@@ -49,6 +52,11 @@ financial state — anything answerable by looking at data that already exists:
   "what's my remaining balance").
 - Historical trends or comparisons (e.g. "did I spend more on food this month than last
   month").
+- Questions answerable from internal documentation — analytics_agent also has a
+  `search_knowledge_base` tool that retrieves relevant snippets from the company
+  knowledge base, manuals, and handbooks (e.g. "what is the company's travel policy?",
+  "how do I submit a reimbursement?"). Delegate any such question to analytics_agent
+  rather than answering from general knowledge.
 analytics_agent is read-only — it can never log, edit, or delete a transaction.
 
 Delegate to `advisor_agent` when the user is asking a *forward-looking or hypothetical*
@@ -125,7 +133,10 @@ def chat_messages_to_model_messages(messages: list[ChatMessage]) -> list[ModelMe
         # tool_call_id/tool_name needed to reconstruct a valid ToolReturnPart.
     return history
 
-async def summarize_chat(messages: list[ModelMessage], max_messages: int = 10) -> list[ModelMessage]:
+
+async def summarize_chat(
+    messages: list[ModelMessage], max_messages: int = 10
+) -> list[ModelMessage]:
     """Compress a long transcript into a lightweight summary string.
 
     This is a simplified version of the summarize_chat function in week05_analytics.py,
@@ -136,7 +147,12 @@ async def summarize_chat(messages: list[ModelMessage], max_messages: int = 10) -
         messages = messages[-6:]
         effective_settings = AppSettings()
         model = GoogleModel(effective_settings.gemini_model)
-        agent = Agent(model, name="chat_summarizer", description="Summarizes a chat transcript into a concise summary.", output_type=str)
+        agent = Agent(
+            model,
+            name="chat_summarizer",
+            description="Summarizes a chat transcript into a concise summary.",
+            output_type=str,
+        )
         summary = await agent.run("Please summarize the chat", message_history=messages[:-6])
         system_message = ModelRequest(
             parts=[SystemPromptPart(content=f"Summary of previous messages: {summary}")]
@@ -203,15 +219,13 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
                         description="A sub-agent that provides financial advice and recommendations based on the user's spending, income, and budget data.",
                         instructions="",  # unused: `agent` below is a pre-built Agent, so this SubAgentConfig field is ignored by _compile_subagent, but the TypedDict still requires the key
                         agent=advisor_agent,
-                    )
+                    ),
                 ],
                 default_model=model,  # otherwise defaults to "openai:gpt-4.1" and needs OPENAI_API_KEY
                 include_general_purpose=False,  # we only want our own named sub-agents, not an auto general-purpose one
             )
         ],
     )
-
-    
 
     @transactions_agent.instructions
     def budget_alert_instructions(ctx: RunContext[AgentState]) -> str:
@@ -248,8 +262,7 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
 
         if categories:
             category_lines = "\n".join(
-                f"- id={c.category_id}, name={c.name!r}, type={c.type}"
-                for c in categories
+                f"- id={c.category_id}, name={c.name!r}, type={c.type}" for c in categories
             )
         else:
             category_lines = "(no categories defined for this user yet)"
@@ -285,6 +298,46 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
         )
 
 
+    @analytics_agent.tool("search_knowledge_base", description="Search the company knowledge base, manuals, and handbooks for relevant context.")
+    def search_knowledge_base(ctx: RunContext[AgentState], query: str) -> str:
+        """Search the company knowledge base, manuals, and handbooks for relevant context.
+        
+        Args:
+            query: The specific search phrase or question to look up.
+        """
+        openai_client = OpenAI(
+            api_key=os.getenv("OPENCODE_API_KEY"),
+            base_url="https://opencode.ai/zen/v1",
+        )
+        # 1. Convert user question into an embedding vector
+        response = openai_client.embeddings.create(
+            input=[query],
+            model="text-embedding-3-small"
+        )
+        query_vector = response.data[0].embedding
+
+        # 2. Perform Cosine Similarity vector search in Postgres
+        # pgvector needs the embedding as a vector literal — psycopg3 won't adapt
+        # a bare Python list, so render it as "[0.1, 0.2, ...]" text first.
+        vector_literal = "[" + ",".join(map(str, query_vector)) + "]"
+        rows = ctx.deps.db.execute(
+            text(
+                """
+                SELECT content
+                FROM document_embeddings
+                ORDER BY embedding <=> :query_vector::vector
+                LIMIT 3
+                """
+            ),
+            {"query_vector": vector_literal},
+        ).fetchall()
+            
+        # 3. Combine matching chunks into a context block
+        if not rows:
+            return "No relevant internal documentation found."
+            
+        context = "\n---\n".join([row[0] for row in rows])
+        return f"Relevant Knowledge Base Snippets:\n{context}"
 
     return orchestrator_agent
 
