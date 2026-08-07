@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -110,3 +111,42 @@ class ChartSpec(BaseModel):
     chart_type: str = Field(min_length=1)
     labels: list[str] = Field(default_factory=list)
     series: list[ChartSeries] = Field(default_factory=list)
+
+
+ChartType = Literal["line", "bar", "pie", "donut", "scatter", "heatmap", "treemap"]
+
+
+class VisualizationSpec(BaseModel):
+    """A single chart specification produced by the Visualization Planner.
+
+    The planner is exposed to the sub-agents as the LLM-powered `visualize_data`
+    tool: it never executes SQL, never touches the database, and never generates
+    frontend code — it only describes charts.
+    """
+
+    chart_type: ChartType
+    title: str = Field(min_length=1)
+    description: str = Field(default="")
+    x_field: str | None = Field(default=None)
+    y_field: str | None = Field(default=None)
+    category_field: str | None = Field(default=None)
+    value_field: str | None = Field(default=None)
+    data: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class VisualizationResponse(BaseModel):
+    """Structured output envelope returned by the Visualization Planner."""
+
+    visualizations: list[VisualizationSpec] = Field(default_factory=list)
+
+
+class ChatVisualizationResponse(BaseModel):
+    """Response for the chat endpoint: the assistant message plus charts.
+
+    The `visualizations` list is empty whenever the planner decided that no
+    chart adds value to the reply.
+    """
+
+    message: str = Field(min_length=1)
+    conversation_id: UUID
+    visualizations: list[VisualizationSpec] = Field(default_factory=list)

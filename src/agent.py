@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
+import json
 import os
-from typing import Any
-
+import re
+from typing import Any, Annotated, cast
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
@@ -14,14 +15,16 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.groq import GroqModel
-from sqlalchemy import or_, select, text
+from sqlalchemy import CursorResult, or_, select, text
 from sqlalchemy.orm import Session
 from src.budget_db_backend import Category
 from subagents_pydantic_ai import SubAgentCapability, SubAgentConfig
 
-from .models import ChatMessage, MessageRole
+from .models import ChatMessage, MessageRole, VisualizationSpec
 from .settings import AppSettings
-from openai import OpenAI
+from .visualization_planner import VISUALIZE_DATA_TOOL_NAME, VisualizationPlanner
+from google import genai
+from google.genai import types
 
 SYSTEM_PROMPT = """
 You are the orchestrator for a conversational personal finance assistant. You talk to the
@@ -79,6 +82,9 @@ If a question needs analytics context to answer (e.g. advisor_agent needing curr
 spending pace), delegate to analytics_agent first, then pass that result into the task
 you give advisor_agent.
 
+All three subagents have a visualisation tool so if you think that a user query might
+benefit from a chart, ask the subagent to make a chart as well.
+
 Handle directly, without delegating:
 - Small talk, clarifying questions, and general app/feature questions.
 - If any of the subagents throw any sort of error, tell that to the user, the actual
@@ -86,6 +92,10 @@ Handle directly, without delegating:
 - Disambiguation: if the user's request is genuinely ambiguous (e.g. unclear whether
   they mean income or expense, which category, or whether they want a lookup vs. advice),
   ask one short clarifying question before delegating.
+- Questions answerable from internal documentation — you also have a
+  `search_knowledge_base` tool that retrieves relevant snippets from the company
+  knowledge base, manuals, and handbooks (e.g. "what is the company's travel policy?",
+  "how do I submit a reimbursement?").
 
 Always respond in the user's currency and phrasing where possible, keep responses
 concise, and never fabricate transaction data, balances, or budget numbers yourself —
@@ -98,12 +108,16 @@ class AgentState:
     db: Session
     current_user_id: int
     subagents: dict[str, Any] = field(default_factory=dict)
+    #: Chart specs produced by the `visualize_data` tool during a run. Shared
+    #: with sub-agent clones so the specs flow back to the /chat endpoint.
+    visualizations: list[VisualizationSpec] = field(default_factory=list)
 
     def clone_for_subagent(self, max_depth: int = 0) -> "AgentState":
         """Create deps for a delegated sub-agent run.
 
-        Shares the same db session and current_user_id (sub-agents need the
-        same DB access and act on behalf of the same user). `subagents` is
+        Shares the same db session, current_user_id, and the `visualizations`
+        list (sub-agents need the same DB access, act on behalf of the same
+        user, and their charts must reach the parent state). `subagents` is
         reset to empty since max_nesting_depth=0 in our SubAgentCapability
         config means sub-agents cannot themselves delegate further.
         """
@@ -111,6 +125,7 @@ class AgentState:
             db=self.db,
             current_user_id=self.current_user_id,
             subagents={} if max_depth <= 0 else self.subagents,
+            visualizations=self.visualizations,
         )
 
 
@@ -165,7 +180,6 @@ async def summarize_chat(
 def create_agent(current_user_id: int, settings: AppSettings | None = None) -> Agent[AgentState]:
     effective_settings = settings or AppSettings()
     model = GroqModel(effective_settings.groq_model)
-
     budget_tools = MCPToolset(
         "http://localhost:8000/mcp",
         headers={"x-current-user-id": str(current_user_id)},
@@ -176,7 +190,7 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
         deps_type=AgentState,
         name="transactions_agent",
         description="A sub-agent that can convert a user's natural language request into a database query and run it for the transactions database.",
-        toolsets=[budget_tools],
+        # toolsets=[budget_tools],
     )
 
     analytics_agent = Agent(
@@ -184,7 +198,7 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
         deps_type=AgentState,
         name="analytics_agent",
         description="A sub-agent that answers questions about the user's spending, income, and budget data by analyzing the transactions database.",
-        toolsets=[budget_tools],
+        # toolsets=[budget_tools],
     )
 
     advisor_agent = Agent(
@@ -192,7 +206,7 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
         deps_type=AgentState,
         name="advisor_agent",
         description="A sub-agent that provides financial advice and recommendations based on the user's spending, income, and budget data.",
-        toolsets=[budget_tools],
+        # toolsets=[budget_tools],
     )
 
     orchestrator_agent = Agent(
@@ -294,27 +308,45 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
             "'WHERE user_id = :current_user_id OR user_id IS NULL'. Do not filter "
             "categories by :current_user_id alone or you will miss valid global "
             "categories the user can still use.\n\n"
+            "VISUALIZATIONS: you also have a `visualize_data` tool that converts "
+            "structured data into chart specifications. Decide yourself whether a "
+            "chart helps: call it when the user asks for a chart, or when the answer "
+            "involves data where a chart adds real value (time series, category "
+            "breakdowns, rankings, month-over-month comparisons, proportions). Pass "
+            "the original user query and the fetched data as a JSON string. Do NOT "
+            "call it for single values, single rows, plain confirmations (e.g. "
+            "'transaction logged'), or when you fetched no data at all. After the "
+            "call, the charts are delivered to the user's UI automatically and the "
+            "tool returns only a short confirmation — never paste chart JSON into "
+            "your reply, just summarize the findings in your own words.\n\n"
             f"Categories belonging to the current user:\n{category_lines}"
         )
 
 
-    @analytics_agent.tool("search_knowledge_base", description="Search the company knowledge base, manuals, and handbooks for relevant context.")
+    @orchestrator_agent.tool(
+        name="search_knowledge_base",
+        description="Search the company knowledge base, manuals, and handbooks for relevant context.",
+    )
     def search_knowledge_base(ctx: RunContext[AgentState], query: str) -> str:
         """Search the company knowledge base, manuals, and handbooks for relevant context.
         
         Args:
             query: The specific search phrase or question to look up.
         """
-        openai_client = OpenAI(
-            api_key=os.getenv("OPENCODE_API_KEY"),
-            base_url="https://opencode.ai/zen/v1",
-        )
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         # 1. Convert user question into an embedding vector
-        response = openai_client.embeddings.create(
-            input=[query],
-            model="text-embedding-3-small"
+        response = client.models.embed_content(
+            # FIX: Change from text-embedding-004 to gemini-embedding-001
+            model="gemini-embedding-001",
+            contents=query,
+            config=types.EmbedContentConfig(
+                # Set task type to optimize it for document vector search
+                task_type="RETRIEVAL_DOCUMENT",
+                # Truncate dimensionality to clean 768 dimensions
+                output_dimensionality=768
+            )
         )
-        query_vector = response.data[0].embedding
+        query_vector = response.embeddings[0].values
 
         # 2. Perform Cosine Similarity vector search in Postgres
         # pgvector needs the embedding as a vector literal — psycopg3 won't adapt
@@ -325,7 +357,7 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
                 """
                 SELECT content
                 FROM document_embeddings
-                ORDER BY embedding <=> :query_vector::vector
+                ORDER BY embedding <=> :query_vector
                 LIMIT 3
                 """
             ),
@@ -339,7 +371,193 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
         context = "\n---\n".join([row[0] for row in rows])
         return f"Relevant Knowledge Base Snippets:\n{context}"
 
+    # Shared LLM-powered visualization tool, available to every sub-agent.
+    for sub_agent in (transactions_agent, analytics_agent, advisor_agent):
+        sub_agent.tool(name=VISUALIZE_DATA_TOOL_NAME, description=VISUALIZE_DATA_DESCRIPTION)(
+            visualize_data
+        )
+
+    @transactions_agent.tool(
+        name="execute_select_query",
+        description="Run a read-only SELECT query against the database and return the results.",
+    )
+    @analytics_agent.tool(
+            name="execute_select_query",
+            description="Run a read-only SELECT query against the database and return the results.",
+        )
+    @advisor_agent.tool(
+            name="execute_select_query",
+            description="Run a read-only SELECT query against the database and return the results.",
+        )
+    def execute_select_query(ctx: RunContext[AgentState], query: str) -> dict[str, Any]:
+        """Run a read-only SELECT query against the database and return the results.
+ 
+        Only SELECT statements are permitted here. To insert, update, or delete data,
+        the transactions_agent must use execute_write_query instead.
+
+        IMPORTANT: never hardcode a user_id value. Any filter on user_id must use the
+        named bind parameter :current_user_id (e.g. "WHERE user_id = :current_user_id").
+        The actual value is supplied by the system, not by you.
+        """
+        clean_query = query.strip().rstrip(";")
+
+        first_word = clean_query.split(None, 1)[0].upper() if clean_query else ""
+        if first_word != "SELECT":
+            return {
+                "status": "error",
+                "error_details": (
+                    f"Statement type '{first_word}' is not permitted here — "
+                    "execute_select_query only accepts SELECT statements."
+                ),
+            }
+
+        error = _check_user_scoping(clean_query)
+        if error:
+            return error
+
+        try:
+            result = cast(
+                CursorResult,
+                ctx.deps.db.execute(
+                    text(clean_query),
+                    {"current_user_id": ctx.deps.current_user_id},
+                ),
+            )
+            columns = list(result.keys())
+            rows = [dict(zip(columns, row, strict=False)) for row in result.fetchall()]
+            return {"status": "success", "row_count": len(rows), "data": rows}
+        except Exception as e:
+            ctx.deps.db.rollback()
+            return {"status": "error", "error_details": str(e)}
+
+
+    @transactions_agent.tool(
+        name="execute_write_query",
+        description="Run a write (INSERT, UPDATE, or DELETE) query against the database.",
+    )
+    def execute_write_query(ctx: RunContext[AgentState], query: str) -> dict[str, Any]:
+        """Run a write (INSERT, UPDATE, or DELETE) query against the database.
+
+        Only transactions_agent has access to this tool. For any read/lookup, use
+        execute_select_query instead.
+
+        IMPORTANT: never hardcode a user_id value. Any filter or inserted value for
+        user_id must use the named bind parameter :current_user_id (e.g.
+        "WHERE user_id = :current_user_id"). The actual value is supplied by the
+        system, not by you.
+        """
+        clean_query = query.strip().rstrip(";")
+
+        first_word = clean_query.split(None, 1)[0].upper() if clean_query else ""
+        if first_word not in {"INSERT", "UPDATE", "DELETE"}:
+            return {
+                "status": "error",
+                "error_details": (
+                    f"Statement type '{first_word}' is not permitted here — "
+                    "execute_write_query only accepts INSERT, UPDATE, or DELETE."
+                ),
+            }
+
+        error = _check_user_scoping(clean_query)
+        if error:
+            return error
+
+        try:
+            result = cast(
+                CursorResult,
+                ctx.deps.db.execute(
+                    text(clean_query),
+                    {"current_user_id": ctx.deps.current_user_id},
+                ),
+            )
+            ctx.deps.db.commit()
+            return {
+                "status": "success",
+                "affected_rows": result.rowcount,
+                "message": "Query executed successfully.",
+            }
+        except Exception as e:
+            ctx.deps.db.rollback()
+            return {"status": "error", "error_details": str(e)}
+
+
+
     return orchestrator_agent
+
+
+VISUALIZE_DATA_DESCRIPTION = (
+    "Turns structured data into chart specifications. Call it when the user asks "
+    "for a chart, or when a chart (time series, category breakdown, ranking, "
+    "comparison, proportions) would materially help the user understand your "
+    "answer. Pass the original user query and the structured data you fetched, "
+    "as a JSON string. The charts are delivered to the UI automatically; the "
+    "tool returns only a short confirmation, so never paste the JSON into your "
+    "reply. Never fabricate data."
+)
+
+USER_SCOPED_TABLES = {"transactions", "categories", "budgets"}
+
+def _check_user_scoping(clean_query: str) -> dict[str, Any] | None:
+    """Return an error dict if a user-scoped query doesn't filter by :current_user_id."""
+    touches_scoped_table = any(
+        re.search(rf"\b{table}\b", clean_query, re.IGNORECASE) for table in USER_SCOPED_TABLES
+    )
+    if touches_scoped_table and ":current_user_id" not in clean_query:
+        return {
+            "status": "error",
+            "error_details": (
+                "This query touches user-scoped data but does not filter by "
+                "user_id using the :current_user_id bind parameter. Rewrite the "
+                "query to include e.g. 'WHERE user_id = :current_user_id'."
+            ),
+        }
+    return None
+
+async def visualize_data(
+    ctx: RunContext[AgentState],
+    user_query: str,
+    data: str,
+    reply_summary: str | None = None,
+) -> str:
+    """Convert structured query results into chart specs for the user.
+
+    LLM-powered: the data and query are handed to the Visualization Planner,
+    which decides which charts add value and emits typed specs.
+
+    Args:
+        user_query: The user's original question, verbatim.
+        data: The structured data to visualize, as a JSON string (an array of
+            row objects, or a single object).
+        reply_summary: Optional short text of the answer the charts accompany.
+    """
+    rows: list[dict[str, Any]] = []
+    try:
+        parsed = json.loads(data)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+    if isinstance(parsed, list):
+        rows = [item for item in parsed if isinstance(item, dict)]
+    elif isinstance(parsed, dict):
+        rows = [parsed]
+    else:
+        rows = [{"raw": data}]
+
+    visualizations = await VisualizationPlanner().plan(
+        user_query=user_query,
+        structured_data=rows,
+        assistant_message=reply_summary or "",
+    )
+    # Store the specs where the /chat endpoint collects them after the run, and
+    # only tell the model a short summary — it must never see or echo the JSON.
+    ctx.deps.visualizations.extend(visualizations)
+    if not visualizations:
+        return "No visualization is needed for this answer."
+    summary = ", ".join(f"'{v.title}' ({v.chart_type})" for v in visualizations)
+    return (
+        f"Generated {len(visualizations)} visualization(s): {summary}. "
+        "The charts are rendered automatically for the user — do not paste "
+        "JSON or chart data into your reply; just summarize the numbers."
+    )
 
 
 SCHEMA_CONTEXT = """

@@ -1,8 +1,8 @@
 "use client";
 
 import { ChatBox, ChatConversationList } from '@mui/x-chat';
-import { useChat, type ChatAdapter } from '@mui/x-chat/headless';
-import { forwardRef, useEffect, useState } from 'react';
+import { useChat, type ChatAdapter, type ChatUser } from '@mui/x-chat/headless';
+import { forwardRef, useEffect, useSyncExternalStore, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
@@ -21,6 +21,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
+import ChartRenderer, { type VisualizationSpec } from './components/ChartRenderer';
 import { authFetch, isAuthenticated, logout } from './lib/auth';
 
 const adapter: ChatAdapter = {
@@ -35,15 +36,26 @@ const adapter: ChatAdapter = {
       }),
       signal,
     });
-    const data: { role: string; content: string; conversation_id: string } = await res.json();
+    const data: {
+      message: string;
+      conversation_id: string;
+      visualizations: VisualizationSpec[];
+    } = await res.json();
 
     return new ReadableStream({
       start(controller) {
         const id = crypto.randomUUID();
         controller.enqueue({ type: 'start', messageId: id });
         controller.enqueue({ type: 'text-start', id: 'text-1' });
-        controller.enqueue({ type: 'text-delta', id: 'text-1', delta: data.content });
+        controller.enqueue({ type: 'text-delta', id: 'text-1', delta: data.message });
         controller.enqueue({ type: 'text-end', id: 'text-1' });
+        if (data.visualizations.length > 0) {
+          controller.enqueue({
+            type: 'data-visualization',
+            id: 'visualizations-1',
+            data: data.visualizations,
+          });
+        }
         controller.enqueue({ type: 'finish', messageId: id });
         controller.close();
       },
@@ -83,12 +95,20 @@ const members = [
 type Conversation = {
   id: string;
   title?: string;
-  participants?: typeof members;
+  participants?: ChatUser[];
 };
+
+/**
+ * Subscribe to the auth token in localStorage. A no-op is fine: auth changes
+ * always navigate (login -> /, logout -> /login), so this page never observes
+ * a token change while mounted. The server snapshot stays `false` so SSR and
+ * hydration stay consistent; the real token is only read after hydration.
+ */
+const subscribeAuth = () => () => {};
 
 export default function App() {
   const router = useRouter();
-  const [authChecked, setAuthChecked] = useState(false);
+  const authChecked = useSyncExternalStore(subscribeAuth, isAuthenticated, () => false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -99,12 +119,10 @@ export default function App() {
   const [newTitleDraft, setNewTitleDraft] = useState('');
 
   useEffect(() => {
-    if (!isAuthenticated()) {
+    if (!authChecked) {
       router.replace('/login');
-      return;
     }
-    setAuthChecked(true);
-  }, [router]);
+  }, [authChecked, router]);
 
   useEffect(() => {
     if (!authChecked) return;
@@ -318,6 +336,26 @@ export default function App() {
         variant="default"
         density="standard"
         suggestionsAutoSubmit={false}
+        partRenderers={{
+          // Renders the charts produced by the backend Visualization Planner
+          // below the assistant message that carries them.
+          'data-visualization': ({ part }) => (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                mt: 1,
+                mb: 0.5,
+                width: '100%',
+              }}
+            >
+              {part.data.map((spec, index) => (
+                <ChartRenderer key={index} spec={spec} />
+              ))}
+            </Box>
+          ),
+        }}
         features={{
           conversationList: true,
           conversationHeader: true,

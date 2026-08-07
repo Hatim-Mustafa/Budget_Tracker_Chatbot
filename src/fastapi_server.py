@@ -11,7 +11,13 @@ from .agent import AgentState, chat_messages_to_model_messages, create_agent, su
 from .budget_db_backend import User as UserTable
 from .db import get_session
 from .db_backend import ConversationHandler
-from .models import ChatMessage, ConversationInfo, ConversationRenameRequest, MessageRole
+from .models import (
+    ChatMessage,
+    ChatVisualizationResponse,
+    ConversationInfo,
+    ConversationRenameRequest,
+    MessageRole,
+)
 
 logfire.configure()
 logfire.instrument_pydantic_ai()
@@ -73,12 +79,12 @@ def create_chat_router() -> APIRouter:
         conversation = convo_handler.create_conversation(user_id=current_user.user_id)
         return conversation.id
 
-    @chat_router.post("/chat", response_model=ChatMessage)
+    @chat_router.post("/chat", response_model=ChatVisualizationResponse)
     async def chat(
         request: ChatMessage,
         session: Session = Depends(get_session),
         current_user: UserTable = Depends(get_current_user),
-    ) -> ChatMessage:
+    ) -> ChatVisualizationResponse:
         convo_handler = ConversationHandler(session)
         if request.conversation_id is None:
             conversation = convo_handler.create_conversation(user_id=current_user.user_id)
@@ -92,18 +98,30 @@ def create_chat_router() -> APIRouter:
             history = await summarize_chat(history)
 
         convo_handler.append_message(request.conversation_id, request)
+        deps = AgentState(db=session, current_user_id=current_user.user_id)
         result: Any = await resolved_agent_factory(current_user.user_id).run(
             request.content,
             message_history=history,
-            deps=AgentState(db=session, current_user_id=current_user.user_id),
+            deps=deps,
         )
+
+        # The sub-agents may have called the LLM-powered `visualize_data` tool
+        # while answering; its specs were stored on the shared AgentState (the
+        # delegation clones share the same list), and are attached to the reply.
+        # The planner itself never touches the DB or SQL.
+        visualizations = deps.visualizations
+
         reply = ChatMessage(
             conversation_id=request.conversation_id,
             role=MessageRole.ASSISTANT,
             content=result.output,
         )
         convo_handler.append_message(request.conversation_id, reply)
-        return reply
+        return ChatVisualizationResponse(
+            message=result.output,
+            conversation_id=request.conversation_id,
+            visualizations=visualizations,
+        )
 
     return chat_router
 
