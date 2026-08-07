@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 import json
 import os
 import re
+import pandas as pd
 from typing import Any, Annotated, cast
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.mcp import MCPToolset
@@ -13,6 +14,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
+from src.dataframe_summarisation import summarize_dataframe
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.groq import GroqModel
 from sqlalchemy import CursorResult, or_, select, text
@@ -425,7 +427,27 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
             )
             columns = list(result.keys())
             rows = [dict(zip(columns, row, strict=False)) for row in result.fetchall()]
-            return {"status": "success", "row_count": len(rows), "data": rows}
+            row_count = len(rows)
+
+            if row_count <= 30:
+                return {
+                    "status": "success",
+                    "is_summarized": False,
+                    "row_count": row_count,
+                    "data": rows,
+                }
+
+            df = pd.DataFrame(rows)
+            summary_text = summarize_dataframe(df)
+
+            return {
+                "status": "success",
+                "is_summarized": True,
+                "row_count": row_count,
+                "message": f"Query returned {row_count} rows (> 30). The data has been automatically summarized below.",
+                "summary": summary_text,
+            }
+
         except Exception as e:
             ctx.deps.db.rollback()
             return {"status": "error", "error_details": str(e)}
