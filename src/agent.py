@@ -437,6 +437,7 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
                     "data": rows,
                 }
 
+            print("Query returned more than 30 rows, summarizing...")
             df = pd.DataFrame(rows)
             summary_text = summarize_dataframe(df)
 

@@ -14,6 +14,7 @@ import {
   IconButton,
   TextField,
   Tooltip,
+  Typography,
 } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import AddCommentIcon from '@mui/icons-material/AddComment';
@@ -21,6 +22,13 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import InsightsIcon from '@mui/icons-material/Insights';
+import BarChartIcon from '@mui/icons-material/BarChart';
+import SearchIcon from '@mui/icons-material/Search';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded';
 import ChartRenderer, { type VisualizationSpec } from './components/ChartRenderer';
 import { authFetch, isAuthenticated, logout } from './lib/auth';
 
@@ -97,6 +105,174 @@ type Conversation = {
   title?: string;
   participants?: ChatUser[];
 };
+
+/** Brand mark used in the app header. */
+export function BrandLogo({ size = 40 }: { size?: number }) {
+  return (
+    <Box
+      sx={{
+        width: size,
+        height: size,
+        borderRadius: size / 2.4,
+        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #a855f7 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#fff',
+        boxShadow: '0 6px 18px rgba(99, 102, 241, 0.4)',
+        flexShrink: 0,
+      }}
+    >
+      <ChatBubbleOutlineRoundedIcon sx={{ fontSize: size * 0.52 }} />
+    </Box>
+  );
+}
+
+/** Quick-start prompts shown in the welcome state. */
+const QUICK_PROMPTS: { icon: typeof InsightsIcon; title: string; prompt: string }[] = [
+  {
+    icon: InsightsIcon,
+    title: 'Explore the data',
+    prompt: 'Summarise the data we have available and highlight the key trends.',
+  },
+  {
+    icon: BarChartIcon,
+    title: 'Visualise something',
+    prompt: 'Create a chart that shows the most important insights in the data.',
+  },
+  {
+    icon: SearchIcon,
+    title: 'Ask the knowledge base',
+    prompt: 'What do we know about this project? Search the knowledge base for context.',
+  },
+  {
+    icon: AccountBalanceWalletIcon,
+    title: 'Analyse the budget',
+    prompt: 'Analyse the budget and show me where we are overspending.',
+  },
+];
+
+/**
+ * Welcome hero rendered inside the thread when the active conversation has no
+ * messages yet. Clicking a prompt sends it straight to the assistant.
+ */
+function WelcomeState() {
+  const { sendMessage, activeConversationId } = useChat();
+
+  const runPrompt = (text: string) => {
+    void sendMessage({
+      conversationId: activeConversationId,
+      parts: [{ type: 'text', text }],
+    });
+  };
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
+        gap: 3,
+        px: { xs: 2, sm: 4 },
+        py: 4,
+        height: '100%',
+        overflow: 'auto',
+      }}
+    >
+      <Box
+        sx={{
+          width: 72,
+          height: 72,
+          borderRadius: '50%',
+          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #a855f7 100%)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#fff',
+          boxShadow: '0 12px 32px rgba(99, 102, 241, 0.45)',
+        }}
+      >
+        <AutoAwesomeIcon sx={{ fontSize: 36 }} />
+      </Box>
+
+      <Box>
+        <Typography
+          variant="h4"
+          sx={{ fontSize: { xs: '1.6rem', sm: '2rem' }, fontWeight: 700, mb: 1 }}
+        >
+          How can I help you today?
+        </Typography>
+        <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 460, mx: 'auto' }}>
+          Ask questions about your data in plain language — I can summarise, analyse and
+          answer with beautiful charts.
+        </Typography>
+      </Box>
+
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+          gap: 1.5,
+          width: '100%',
+          maxWidth: 640,
+          mt: 1,
+        }}
+      >
+        {QUICK_PROMPTS.map(({ icon: PromptIcon, title, prompt }) => (
+          <Button
+            key={title}
+            variant="outlined"
+            onClick={() => runPrompt(prompt)}
+            sx={{
+              justifyContent: 'flex-start',
+              textAlign: 'left',
+              p: 2,
+              borderRadius: 18,
+              borderColor: 'rgba(99, 102, 241, 0.25)',
+              backgroundColor: 'rgba(255, 255, 255, 0.85)',
+              backdropFilter: 'blur(8px)',
+              textTransform: 'none',
+              '&:hover': {
+                borderColor: '#6366f1',
+                backgroundColor: '#fff',
+                boxShadow: '0 8px 24px rgba(99, 102, 241, 0.18)',
+              },
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, width: '100%' }}>
+              <Box
+                sx={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(168,85,247,0.12))',
+                  color: '#6366f1',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <PromptIcon fontSize="small" />
+              </Box>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  {title}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                  {prompt}
+                </Typography>
+              </Box>
+              <ArrowForwardIcon fontSize="small" sx={{ color: 'text.disabled', flexShrink: 0 }} />
+            </Box>
+          </Button>
+        ))}
+      </Box>
+    </Box>
+  );
+}
 
 /**
  * Subscribe to the auth token in localStorage. A no-op is fine: auth changes
@@ -255,17 +431,10 @@ export default function App() {
             flexDirection: 'column',
             height: '100%',
             minHeight: 0,
-            bgcolor: 'background.paper',
+            bgcolor: 'transparent',
           }}
         >
-          <Box
-            sx={{
-              p: 1,
-              borderBottom: 1,
-              borderColor: 'divider',
-              bgcolor: 'background.paper',
-            }}
-          >
+          <Box sx={{ p: 1.25, pt: 1.5 }}>
             {isCreatingNew ? (
               <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
                 <TextField
@@ -297,9 +466,10 @@ export default function App() {
               <Button
                 fullWidth
                 size="small"
-                variant="outlined"
+                variant="contained"
                 startIcon={<AddCommentIcon />}
                 onClick={handleStartNewConversation}
+                sx={{ py: 1, fontSize: '0.875rem' }}
               >
                 New chat
               </Button>
@@ -318,16 +488,61 @@ export default function App() {
   }
 
   return (
-    <Box sx={{ height: 728 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+    <Box
+      sx={{
+        height: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      {/* App header */}
+      <Box
+        component="header"
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 2,
+          px: { xs: 2, sm: 3 },
+          py: 1.5,
+          flexShrink: 0,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+          <BrandLogo />
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              variant="subtitle1"
+              sx={{ fontWeight: 800, lineHeight: 1.15, letterSpacing: '-0.01em' }}
+            >
+              Insight Chat
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
+              Your data, in conversation
+            </Typography>
+          </Box>
+        </Box>
         <Tooltip title="Log out">
-          <IconButton size="small" onClick={() => logout()}>
+          <IconButton
+            size="small"
+            onClick={() => logout()}
+            sx={{
+              border: '1px solid rgba(15, 23, 42, 0.08)',
+              bgcolor: 'rgba(255, 255, 255, 0.7)',
+              color: 'text.secondary',
+              '&:hover': { bgcolor: 'rgba(225, 29, 72, 0.08)', color: 'error.main' },
+            }}
+          >
             <LogoutIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </Box>
-      <ChatBox
-        adapter={adapter}
+
+      {/* Chat */}
+      <Box sx={{ flex: 1, minHeight: 0, px: { xs: 1, sm: 2 }, pb: { xs: 1, sm: 2 } }}>
+        <ChatBox
+          adapter={adapter}
         members={members}
         activeConversationId={activeConversationId}
         onActiveConversationChange={setActiveConversationId}
@@ -368,9 +583,11 @@ export default function App() {
         slots={{
           conversationHeaderActions: ConversationHeaderActions,
           conversationList: ConversationListWithNewChat,
+          emptyState: WelcomeState,
         }}
         sx={{ height: '100%' }}
       />
+      </Box>
       <Dialog open={renameDialogOpen} onClose={() => setRenameDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Rename conversation</DialogTitle>
         <DialogContent>
@@ -389,7 +606,7 @@ export default function App() {
             }}
           />
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRenameDialogOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={() => void handleSubmitRename()}>
             Save
@@ -401,7 +618,7 @@ export default function App() {
         <DialogContent>
           This permanently deletes the conversation and all its messages. This cannot be undone.
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setDeleteTargetId(null)}>Cancel</Button>
           <Button color="error" variant="contained" onClick={() => void handleConfirmDelete()}>
             Delete

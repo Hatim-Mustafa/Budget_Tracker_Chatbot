@@ -3,13 +3,29 @@
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Box, Button, Paper, TextField, Typography, Alert } from '@mui/material';
+import {
+  Box,
+  Button,
+  Paper,
+  TextField,
+  Typography,
+  Alert,
+  InputAdornment,
+  IconButton,
+  CircularProgress,
+} from '@mui/material';
+import PersonOutlineRoundedIcon from '@mui/icons-material/PersonOutlineRounded';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import { BrandLogo } from '../page';
 import { API_BASE, setToken } from '../lib/auth';
 
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -47,16 +63,37 @@ export default function LoginPage() {
   return (
     <Box
       sx={{
-        height: '100vh',
+        minHeight: '100dvh',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        p: 2,
       }}
     >
-      <Paper elevation={3} sx={{ p: 4, width: 360 }} component="form" onSubmit={handleSubmit}>
-        <Typography variant="h5" sx={{ mb: 3 }}>
-          Log in
-        </Typography>
+      <Paper
+        elevation={0}
+        component="form"
+        onSubmit={handleSubmit}
+        sx={{
+          width: '100%',
+          maxWidth: 420,
+          p: { xs: 3, sm: 4.5 },
+          borderRadius: 28,
+          border: '1px solid rgba(15, 23, 42, 0.06)',
+          boxShadow: '0 20px 60px rgba(15, 23, 42, 0.12)',
+          background: 'rgba(255, 255, 255, 0.92)',
+          backdropFilter: 'blur(16px)',
+        }}
+      >
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 3 }}>
+          <BrandLogo size={56} />
+          <Typography variant="h5" sx={{ mt: 2, fontWeight: 800, letterSpacing: '-0.02em' }}>
+            Welcome back
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Log in to continue chatting with your data
+          </Typography>
+        </Box>
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -72,29 +109,78 @@ export default function LoginPage() {
           onChange={(e) => setUsername(e.target.value)}
           autoFocus
           required
+          autoComplete="username"
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <PersonOutlineRoundedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                </InputAdornment>
+              ),
+            },
+          }}
         />
         <TextField
           label="Password"
-          type="password"
+          type={showPassword ? 'text' : 'password'}
           fullWidth
           margin="normal"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          autoComplete="current-password"
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <LockOutlinedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                </InputAdornment>
+              ),
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    onClick={() => setShowPassword((v) => !v)}
+                    edge="end"
+                    size="small"
+                  >
+                    {showPassword ? (
+                      <VisibilityOffIcon fontSize="small" />
+                    ) : (
+                      <VisibilityIcon fontSize="small" />
+                    )}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            },
+          }}
         />
 
         <Button
           type="submit"
           variant="contained"
           fullWidth
-          sx={{ mt: 3 }}
+          sx={{ mt: 3, py: 1.25, fontSize: '0.95rem' }}
           disabled={loading}
         >
-          {loading ? 'Logging in...' : 'Log in'}
+          {loading ? (
+            <>
+              <CircularProgress size={18} color="inherit" sx={{ mr: 1 }} />
+              Logging in...
+            </>
+          ) : (
+            'Log in'
+          )}
         </Button>
 
-        <Typography variant="body2" sx={{ mt: 2, textAlign: 'center' }}>
-          No account? <Link href="/register">Register</Link>
+        <Typography variant="body2" sx={{ mt: 2.5, textAlign: 'center', color: 'text.secondary' }}>
+          No account?{' '}
+          <Link
+            href="/register"
+            style={{ color: '#6366f1', fontWeight: 600, textDecoration: 'none' }}
+          >
+            Register
+          </Link>
         </Typography>
       </Paper>
     </Box>

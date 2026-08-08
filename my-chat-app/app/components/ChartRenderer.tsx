@@ -9,6 +9,7 @@
  */
 
 import { Box, Typography } from '@mui/material';
+import BarChartIcon from '@mui/icons-material/BarChart';
 import * as echarts from 'echarts/core';
 import { BarChart, HeatmapChart, LineChart, PieChart, ScatterChart, TreemapChart } from 'echarts/charts';
 import {
@@ -313,16 +314,56 @@ function ChartRenderer({ spec }: { spec: VisualizationSpec }) {
   }, [option]);
 
   return (
-    <Box component="figure" sx={{ m: 0, width: '100%' }}>
-      <Typography variant="subtitle2" component="figcaption" sx={{ mb: 0.5 }}>
-        {spec.title}
-      </Typography>
-      <Box ref={containerRef} sx={{ width: '100%', height: 280 }} />
-      {spec.description ? (
-        <Typography variant="caption" color="text.secondary">
-          {spec.description}
+    <Box
+      component="figure"
+      sx={{
+        m: 0,
+        width: '100%',
+        borderRadius: 4,
+        border: '1px solid rgba(15, 23, 42, 0.06)',
+        background: 'rgba(255, 255, 255, 0.9)',
+        boxShadow: '0 2px 12px rgba(15, 23, 42, 0.05)',
+        overflow: 'hidden',
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 2,
+          py: 1.25,
+          borderBottom: '1px solid rgba(15, 23, 42, 0.05)',
+          background: 'linear-gradient(90deg, rgba(99,102,241,0.06), rgba(168,85,247,0.06))',
+        }}
+      >
+        <Box
+          sx={{
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #a855f7 100%)',
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <BarChartIcon fontSize="small" />
+        </Box>
+        <Typography variant="subtitle2" component="figcaption" sx={{ fontWeight: 700 }}>
+          {spec.title}
         </Typography>
-      ) : null}
+      </Box>
+      <Box sx={{ p: 1.5 }}>
+        <Box ref={containerRef} sx={{ width: '100%', height: 280 }} />
+        {spec.description ? (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 0.5, pt: 0.5 }}>
+            {spec.description}
+          </Typography>
+        ) : null}
+      </Box>
     </Box>
   );
 }
