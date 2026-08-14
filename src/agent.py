@@ -1,9 +1,12 @@
-from dataclasses import dataclass, field
 import json
 import os
 import re
+from dataclasses import dataclass, field
+from typing import Annotated, Any, cast
+
 import pandas as pd
-from typing import Any, Annotated, cast
+from google import genai
+from google.genai import types
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
@@ -14,19 +17,17 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from src.dataframe_summarisation import summarize_dataframe
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.groq import GroqModel
 from sqlalchemy import CursorResult, or_, select, text
 from sqlalchemy.orm import Session
 from src.budget_db_backend import Category
+from src.dataframe_summarisation import summarize_dataframe
 from subagents_pydantic_ai import SubAgentCapability, SubAgentConfig
 
 from .models import ChatMessage, MessageRole, VisualizationSpec
 from .settings import AppSettings
 from .visualization_planner import VISUALIZE_DATA_TOOL_NAME, VisualizationPlanner
-from google import genai
-from google.genai import types
 
 SYSTEM_PROMPT = """
 You are the orchestrator for a conversational personal finance assistant. You talk to the
@@ -324,14 +325,13 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
             f"Categories belonging to the current user:\n{category_lines}"
         )
 
-
     @orchestrator_agent.tool(
         name="search_knowledge_base",
         description="Search the company knowledge base, manuals, and handbooks for relevant context.",
     )
     def search_knowledge_base(ctx: RunContext[AgentState], query: str) -> str:
         """Search the company knowledge base, manuals, and handbooks for relevant context.
-        
+
         Args:
             query: The specific search phrase or question to look up.
         """
@@ -345,8 +345,8 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
                 # Set task type to optimize it for document vector search
                 task_type="RETRIEVAL_DOCUMENT",
                 # Truncate dimensionality to clean 768 dimensions
-                output_dimensionality=768
-            )
+                output_dimensionality=768,
+            ),
         )
         query_vector = response.embeddings[0].values
 
@@ -365,11 +365,11 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
             ),
             {"query_vector": vector_literal},
         ).fetchall()
-            
+
         # 3. Combine matching chunks into a context block
         if not rows:
             return "No relevant internal documentation found."
-            
+
         context = "\n---\n".join([row[0] for row in rows])
         return f"Relevant Knowledge Base Snippets:\n{context}"
 
@@ -384,16 +384,16 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
         description="Run a read-only SELECT query against the database and return the results.",
     )
     @analytics_agent.tool(
-            name="execute_select_query",
-            description="Run a read-only SELECT query against the database and return the results.",
-        )
+        name="execute_select_query",
+        description="Run a read-only SELECT query against the database and return the results.",
+    )
     @advisor_agent.tool(
-            name="execute_select_query",
-            description="Run a read-only SELECT query against the database and return the results.",
-        )
+        name="execute_select_query",
+        description="Run a read-only SELECT query against the database and return the results.",
+    )
     def execute_select_query(ctx: RunContext[AgentState], query: str) -> dict[str, Any]:
         """Run a read-only SELECT query against the database and return the results.
- 
+
         Only SELECT statements are permitted here. To insert, update, or delete data,
         the transactions_agent must use execute_write_query instead.
 
@@ -453,7 +453,6 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
             ctx.deps.db.rollback()
             return {"status": "error", "error_details": str(e)}
 
-
     @transactions_agent.tool(
         name="execute_write_query",
         description="Run a write (INSERT, UPDATE, or DELETE) query against the database.",
@@ -503,8 +502,6 @@ def create_agent(current_user_id: int, settings: AppSettings | None = None) -> A
             ctx.deps.db.rollback()
             return {"status": "error", "error_details": str(e)}
 
-
-
     return orchestrator_agent
 
 
@@ -519,6 +516,7 @@ VISUALIZE_DATA_DESCRIPTION = (
 )
 
 USER_SCOPED_TABLES = {"transactions", "categories", "budgets"}
+
 
 def _check_user_scoping(clean_query: str) -> dict[str, Any] | None:
     """Return an error dict if a user-scoped query doesn't filter by :current_user_id."""
@@ -535,6 +533,7 @@ def _check_user_scoping(clean_query: str) -> dict[str, Any] | None:
             ),
         }
     return None
+
 
 async def visualize_data(
     ctx: RunContext[AgentState],

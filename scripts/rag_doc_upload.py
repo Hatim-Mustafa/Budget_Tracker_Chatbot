@@ -3,12 +3,11 @@ import os
 from pathlib import Path
 
 import psycopg
-from markitdown import MarkItDown
 from chonkie import TokenChunker
-from openai import OpenAI
 from google import genai
 from google.genai import types
-
+from markitdown import MarkItDown
+from openai import OpenAI
 
 base_url: str = "https://opencode.ai/zen/v1"
 # Initialize clients
@@ -16,7 +15,9 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 mid = MarkItDown()
 # psycopg.connect() only understands a libpq URI or conninfo string, not a
 # SQLAlchemy URL — strip the "+psycopg" dialect marker first.
-db_conn = psycopg.connect(os.getenv("DATABASE_URL").replace("+psycopg", "")) # e.g., postgresql://...
+db_conn = psycopg.connect(
+    os.getenv("DATABASE_URL").replace("+psycopg", "")
+)  # e.g., postgresql://...
 
 # Resolve the project data folder relative to this script, so the script works
 # from any working directory.
@@ -37,13 +38,12 @@ chunks = chunker.chunk(markdown_text)
 
 # 3. Generate embeddings and save to Postgres
 with db_conn.cursor() as cur:
-
     cur.execute(
         """
         INSERT INTO source_documents (file_name, file_type, raw_binary)
         VALUES (%s, %s, %s) RETURNING id;
         """,
-        ("doc3.pdf", "application/pdf", psycopg.Binary(file_bytes))
+        ("doc3.pdf", "application/pdf", psycopg.Binary(file_bytes)),
     )
     document_id = cur.fetchone()[0]
 
@@ -57,18 +57,18 @@ with db_conn.cursor() as cur:
                 # Set task type to optimize it for document vector search
                 task_type="RETRIEVAL_DOCUMENT",
                 # Truncate dimensionality to clean 768 dimensions
-                output_dimensionality=768
-            )
+                output_dimensionality=768,
+            ),
         )
         vector = response.embeddings[0].values
-        
+
         # Insert into pgvector
         cur.execute(
-        """
+            """
         INSERT INTO document_embeddings (document_id, chunk_index, content, embedding)
         VALUES (%s, %s, %s, %s);
         """,
-        (document_id, idx, chunk.text, vector)
-    )
+            (document_id, idx, chunk.text, vector),
+        )
     db_conn.commit()
 print("Ingestion complete!")

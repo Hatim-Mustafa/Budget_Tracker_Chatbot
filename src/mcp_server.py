@@ -8,8 +8,8 @@ from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.engine import CursorResult
-
 from src.budget_db_backend import Budget, Category, Transaction
+
 from .db_backend import build_engine, build_session_factory
 from .settings import AppSettings
 

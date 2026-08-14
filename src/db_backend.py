@@ -65,10 +65,10 @@ class ConversationHandler:
     def create_conversation(
         self, title: str = "New conversation", user_id: int | None = None
     ) -> Conversation:
-        new_cnvo = Conversation(title=title, user_id=user_id)
-        self.session.add(new_cnvo)
+        conversation = Conversation(title=title, user_id=user_id)
+        self.session.add(conversation)
         self.session.flush()
-        return new_cnvo
+        return conversation
 
     def append_message(self, convo_id: UUID, message: ChatMessage) -> Message:
         record = Message(conversation_id=convo_id, role=message.role.value, content=message.content)
@@ -101,13 +101,13 @@ class ConversationHandler:
         return True
 
     def load_messages(self, convo_id: UUID) -> list[ChatMessage]:
-        msgs = (
+        messages = (
             self.session.query(Message)
             .filter_by(conversation_id=convo_id)
             .order_by(Message.created_at)
             .all()
         )
-        msgss = [
+        chat_messages = [
             ChatMessage(
                 id=msg.id,
                 role=MessageRole(msg.role),
@@ -115,6 +115,6 @@ class ConversationHandler:
                 conversation_id=msg.conversation_id,
                 created_at=msg.created_at,
             )
-            for msg in msgs
+            for msg in messages
         ]
-        return msgss
+        return chat_messages
